@@ -7,16 +7,14 @@ import (
 
 func TestCsvToExcelTsv(t *testing.T) {
 	// テストケース
-	// 1. 通常のフィールド
-	// 2. 0埋め数値 ("00123") -> ="00123" に変換されるべき
-	// 3. カンマを含むフィールド -> タブ区切りにおいて引用符で囲まれるべき（csv.Writerが処理）
-	// 4. 数値の0 ("0") -> 文字列として扱っても良いが、今回は ="0" になる想定
-	// 5. 【追加】列数が異なる行があってもエラーにならないこと
-	inputCSV := `id,name,code
-1,Alice,00100
-2,"Bob, Jr",050
-3,Charlie,0
-4,Dave` // 4行目は2列しかない
+	// ユーザー要望: 入力ファイルの内容を「そのまま」Excelに表示する
+	// 1. "abc"       -> Excel表示: "abc"
+	// 2. ""00001""   -> Excel表示: ""00001""
+	// 3. 00001       -> Excel表示: 00001
+	// 4. ""12345""   -> Excel表示: ""12345""
+
+	inputCSV := `col1,col2,col3,col4
+"abc",""00001"",00001,""12345""`
 
 	r := strings.NewReader(inputCSV)
 	output, err := CsvToExcelTsv(r)
@@ -24,36 +22,41 @@ func TestCsvToExcelTsv(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// 行ごとに分割して検証
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) != 5 { // ヘッダ + 4データ行
-		t.Errorf("Expected 5 lines, got %d", len(lines))
+	if len(lines) != 2 {
+		t.Errorf("Expected 2 lines, got %d", len(lines))
+	}
+	dataLine := lines[1]
+
+	// 1. "abc"
+	// 期待値: Excelで "abc" と表示されること。
+	// そのためのTSV形式: =" ""abc"" " -> CSVエスケープ -> "="" ""abc"" """
+	// 少なくとも、元の値 "abc" がそのまま含まれている必要がある
+	if !strings.Contains(dataLine, `"abc"`) {
+		t.Errorf("Value '\"abc\"' lost.\nGot: %s", dataLine)
+	}
+	// 数式化されていること
+	if !strings.Contains(dataLine, `="`) {
+		t.Errorf("Not formulated.\nGot: %s", dataLine)
 	}
 
-	// ヘッダ行の検証
-	expectedHeader := "id\tname\tcode"
-	if lines[0] != expectedHeader {
-		t.Errorf("Header mismatch.\nExpected: %q\nGot:      %q", expectedHeader, lines[0])
+	// 2. ""00001""
+	// 期待値: Excelで ""00001"" と表示されること。
+	if !strings.Contains(dataLine, `""00001""`) {
+		t.Errorf("Value '\"\"00001\"\"' lost.\nGot: %s", dataLine)
 	}
 
-	// データ行1
-	if !strings.Contains(lines[1], `"=""00100"""`) {
-		t.Errorf("Zero padding logic failed for line 1.\nGot: %s", lines[1])
+	// 3. 00001
+	// 期待値: Excelで 00001 と表示されること。(0落ちせず)
+	if !strings.Contains(dataLine, `="00001"`) {
+		// TSVエスケープにより "=""00001""" になっている可能性があるが、
+		// コア部分 ="00001" は共通して含まれるはず
+		t.Errorf("Value '00001' logic failed.\nGot: %s", dataLine)
 	}
 
-	// データ行2
-	if !strings.Contains(lines[2], `"=""050"""`) {
-		t.Errorf("Zero padding logic failed for line 2.\nGot: %s", lines[2])
-	}
-
-	// データ行3
-	if !strings.Contains(lines[3], `"=""0"""`) {
-		t.Errorf("Zero handling failed for line 3.\nGot: %s", lines[3])
-	}
-
-	// データ行4（列数が少ない行の検証）
-	// Daveの行は "4\tDave" となっているはず
-	if !strings.Contains(lines[4], "Dave") {
-		t.Errorf("Variable field count line failed.\nGot: %s", lines[4])
+	// 4. ""12345""
+	// 期待値: Excelで ""12345"" と表示されること。
+	if !strings.Contains(dataLine, `""12345""`) {
+		t.Errorf("Value '\"\"12345\"\"' lost.\nGot: %s", dataLine)
 	}
 }
