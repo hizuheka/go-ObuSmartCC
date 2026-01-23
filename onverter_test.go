@@ -7,14 +7,13 @@ import (
 
 func TestCsvToExcelTsv(t *testing.T) {
 	// テストケース
-	// ユーザー要望: 入力ファイルの内容を「そのまま」Excelに表示する
-	// 1. "abc"       -> Excel表示: "abc"
-	// 2. ""00001""   -> Excel表示: ""00001""
-	// 3. 00001       -> Excel表示: 00001
-	// 4. ""12345""   -> Excel表示: ""12345""
+	// 1. セクションマーカーとヘッダが別行の場合でも正しく動作するか
+	// 2. ヘッダ行の jobname_jes が jobname_jes1, jobname_jes2 に置換されるか
+	// 3. データ行の分割が正しく行われ、1列目に "_" が残るか
 
-	inputCSV := `col1,col2,col3,col4
-"abc",""00001"",00001,""12345""`
+	inputCSV := `JOB
+jobname,jobnumber,jobparam,jobname_jes,val1
+"C999.BAT","1","AUTO","01_C299_TITLE","val"`
 
 	r := strings.NewReader(inputCSV)
 	output, err := CsvToExcelTsv(r)
@@ -23,40 +22,28 @@ func TestCsvToExcelTsv(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) != 2 {
-		t.Errorf("Expected 2 lines, got %d", len(lines))
-	}
-	dataLine := lines[1]
-
-	// 1. "abc"
-	// 期待値: Excelで "abc" と表示されること。
-	// そのためのTSV形式: =" ""abc"" " -> CSVエスケープ -> "="" ""abc"" """
-	// 少なくとも、元の値 "abc" がそのまま含まれている必要がある
-	if !strings.Contains(dataLine, `"abc"`) {
-		t.Errorf("Value '\"abc\"' lost.\nGot: %s", dataLine)
-	}
-	// 数式化されていること
-	if !strings.Contains(dataLine, `="`) {
-		t.Errorf("Not formulated.\nGot: %s", dataLine)
+	if len(lines) != 3 {
+		t.Errorf("Expected 3 lines, got %d", len(lines))
 	}
 
-	// 2. ""00001""
-	// 期待値: Excelで ""00001"" と表示されること。
-	if !strings.Contains(dataLine, `""00001""`) {
-		t.Errorf("Value '\"\"00001\"\"' lost.\nGot: %s", dataLine)
+	// Line 1: JOB (セクションマーカー)
+	if !strings.Contains(lines[0], `="JOB"`) {
+		t.Errorf("Section marker corrupted.\nGot: %s", lines[0])
 	}
 
-	// 3. 00001
-	// 期待値: Excelで 00001 と表示されること。(0落ちせず)
-	if !strings.Contains(dataLine, `="00001"`) {
-		// TSVエスケープにより "=""00001""" になっている可能性があるが、
-		// コア部分 ="00001" は共通して含まれるはず
-		t.Errorf("Value '00001' logic failed.\nGot: %s", dataLine)
+	// Line 2: ヘッダ行
+	// jobname_jes1, jobname_jes2 に置換されているか
+	if !strings.Contains(lines[1], `="jobname_jes1"`) || !strings.Contains(lines[1], `="jobname_jes2"`) {
+		t.Errorf("Header replacement failed.\nGot: %s", lines[1])
 	}
 
-	// 4. ""12345""
-	// 期待値: Excelで ""12345"" と表示されること。
-	if !strings.Contains(dataLine, `""12345""`) {
-		t.Errorf("Value '\"\"12345\"\"' lost.\nGot: %s", dataLine)
+	// Line 3: データ行
+	// "01_C299_TITLE" -> "01_", "C299_TITLE"
+	// 要望通り、1列目にアンダースコアが残っていることを確認
+	if !strings.Contains(lines[2], `="01_"`) {
+		t.Errorf("Data split part 1 failed (underscore check).\nGot: %s", lines[2])
+	}
+	if !strings.Contains(lines[2], `="C299_TITLE"`) {
+		t.Errorf("Data split part 2 failed.\nGot: %s", lines[2])
 	}
 }

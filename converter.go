@@ -13,25 +13,75 @@ import (
 func CsvToExcelTsv(r io.Reader) (string, error) {
 	scanner := bufio.NewScanner(r)
 
-	// バッファを作成し、TSV書き込み用のWriterを用意
 	var buf bytes.Buffer
 	tsvWriter := csv.NewWriter(&buf)
-	tsvWriter.Comma = '\t' // 区切り文字をタブに設定
+	tsvWriter.Comma = '\t'
 	tsvWriter.UseCRLF = true
+
+	// 状態管理用変数
+	var currentSection string
+	splitTargetIndex := -1 // 分割対象の列インデックス (-1は対象なし)
 
 	lineCount := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		lineCount++
 
-		// 空行はスキップ
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 
-		// 自前のロジックでCSV行をパース（読み込んだままの形を維持するため）
+		// 1. 行をパース
 		record := parseDirtyCSVLine(line)
+		if len(record) == 0 {
+			continue
+		}
 
+		// 2. セクション開始の判定
+		firstCol := strings.ToUpper(strings.TrimSpace(record[0]))
+
+		if firstCol == "NET" || firstCol == "JOB" {
+			currentSection = firstCol
+			splitTargetIndex = -1 // セクションが変わったらリセット
+		}
+
+		isHeaderLine := false
+
+		// 3. JOBセクションにおいて、分割対象列(jobname_jes)の位置を特定する
+		if currentSection == "JOB" && splitTargetIndex == -1 {
+			for i, colName := range record {
+				if strings.EqualFold(colName, "jobname_jes") {
+					splitTargetIndex = i
+					isHeaderLine = true // 見つかったこの行こそがヘッダ行である
+					break
+				}
+			}
+		}
+
+		// 4. 列分割・置換処理
+		if currentSection == "JOB" && splitTargetIndex != -1 && len(record) > splitTargetIndex {
+			if isHeaderLine {
+				// ヘッダ行の場合: 列名を指定のもの(jobname_jes1, jobname_jes2)に強制置換
+				record = expandColumn(record, splitTargetIndex, "jobname_jes1", "jobname_jes2")
+			} else {
+				// データ行の場合: 値を "_" で分割して展開
+				targetValue := record[splitTargetIndex]
+				parts := strings.SplitN(targetValue, "_", 2)
+				val1 := parts[0]
+				val2 := ""
+
+				// 分割が行われた場合（_が含まれていた場合）、1列目の末尾に "_" を残す
+				// 例: "01_zzzz" -> parts=["01", "zzzz"] -> val1="01_", val2="zzzz"
+				if len(parts) > 1 {
+					val1 += "_"
+					val2 = parts[1]
+				}
+
+				record = expandColumn(record, splitTargetIndex, val1, val2)
+			}
+		}
+
+		// 5. Excel形式への変換と書き出し
 		processedRecord := make([]string, len(record))
 		for i, field := range record {
 			processedRecord[i] = escapeForExcel(field)
@@ -52,6 +102,17 @@ func CsvToExcelTsv(r io.Reader) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+// expandColumn はレコード内の指定インデックスの列を削除し、代わりに2つの値を挿入して列を拡張します。
+func expandColumn(record []string, index int, val1, val2 string) []string {
+	newRecord := make([]string, 0, len(record)+1)
+	newRecord = append(newRecord, record[:index]...)
+	newRecord = append(newRecord, val1, val2)
+	if index+1 < len(record) {
+		newRecord = append(newRecord, record[index+1:]...)
+	}
+	return newRecord
 }
 
 // parseDirtyCSVLine は行儀の悪いCSV行を柔軟にパースします。
@@ -83,13 +144,6 @@ func parseDirtyCSVLine(line string) []string {
 
 // escapeForExcel はフィールドの値をそのままExcelに表示できるよう変換します。
 func escapeForExcel(field string) string {
-	// 方針: 入力ファイルから読み込んだ内容を「そのまま」Excelに表示する。
-	// そのため、クォート除去や条件分岐は一切行わず、
-	// 全ての値を無条件で Excelの数式形式(="...") として出力する。
-
-	// Excel数式内でダブルクォートを正しく表示するためにエスケープ (" -> "")
 	escapedField := strings.ReplaceAll(field, `"`, `""`)
-
-	// 全てを数式化して返す
 	return fmt.Sprintf(`="%s"`, escapedField)
 }
